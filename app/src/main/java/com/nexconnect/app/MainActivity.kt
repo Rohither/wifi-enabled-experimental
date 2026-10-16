@@ -161,6 +161,7 @@ private fun NexApp() {
     var showSplash by remember { mutableStateOf(true) }
     var showConnectionInfo by remember { mutableStateOf(false) }
     var showWifiOverlay by remember { mutableStateOf(false) }
+    var showSmartSwitchInfo by remember { mutableStateOf(false) }
     val wifiController = remember(context) { WifiConnectionController(context.applicationContext) }
     var darkTheme by remember(context) { mutableStateOf(AppSettingsStore.darkTheme(context)) }
     var selectedBleSlot by remember { mutableIntStateOf(0) }
@@ -276,7 +277,8 @@ private fun NexApp() {
                                 onConnect = { tab = 2 },
                                 wifiConnected = wifiController.state.connectedSsid != null,
                                 wifiSsid = wifiController.state.connectedSsid.orEmpty(),
-                                onWifiClick = { showWifiOverlay = true }
+                                onWifiClick = { showWifiOverlay = true },
+                                onSmartSwitchClick = { showSmartSwitchInfo = true }
                             )
                             1 -> HistoryPage(padding, context, historyRevision[selectedBleSlot], selectedBleSlot) { BatteryHistoryStore.clear(context, selectedBleSlot); historyRevision[selectedBleSlot]++ }
                             2 -> Spacer(Modifier.fillMaxSize()) // SettingsPage remains composed beneath this layer to own all BLE links.
@@ -294,6 +296,12 @@ private fun NexApp() {
             BluetoothSearchOverlay { slotSearchCancelSignal[selectedBleSlot]++ }
         }
         if (showWifiOverlay) WifiConnectionOverlay(wifiController) { showWifiOverlay = false }
+        if (showSmartSwitchInfo) AlertDialog(
+            onDismissRequest = { showSmartSwitchInfo = false },
+            title = { Text("SMART SWITCH") },
+            text = { Text("Smart Switch connectivity is not configured yet.") },
+            confirmButton = { TextButton(onClick = { showSmartSwitchInfo = false }) { Text("OK") } }
+        )
         if (showConnectionInfo) AlertDialog(
             onDismissRequest = { showConnectionInfo = false },
             title = { Text("Connection setup") },
@@ -640,7 +648,7 @@ private fun BluetoothSearchOverlay(onCancel: () -> Unit) {
 }
 
 @Composable
-private fun MonitorScreen(padding: PaddingValues, telemetry: BmsTelemetry?, connected: Boolean, batteryName: String, bluetoothActivity: Boolean, readingStatus: String, slotNames: List<String>, slotConnections: List<Boolean>, selectedSlot: Int, onSelectSlot: (Int) -> Unit, onConnect: () -> Unit, wifiConnected: Boolean, wifiSsid: String, onWifiClick: () -> Unit) {
+private fun MonitorScreen(padding: PaddingValues, telemetry: BmsTelemetry?, connected: Boolean, batteryName: String, bluetoothActivity: Boolean, readingStatus: String, slotNames: List<String>, slotConnections: List<Boolean>, selectedSlot: Int, onSelectSlot: (Int) -> Unit, onConnect: () -> Unit, wifiConnected: Boolean, wifiSsid: String, onWifiClick: () -> Unit, onSmartSwitchClick: () -> Unit) {
     val soc = telemetry?.socPercent
     val progressColor = when {
         soc == null -> Teal
@@ -761,13 +769,22 @@ private fun MonitorScreen(padding: PaddingValues, telemetry: BmsTelemetry?, conn
             }
         }
         item {
-            FilterChip(
-                selected = wifiConnected,
-                onClick = onWifiClick,
-                modifier = Modifier.fillMaxWidth(),
-                leadingIcon = { Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp)) },
-                label = { Text(if (wifiConnected) "WIFI · $wifiSsid" else "WIFI", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = wifiConnected,
+                    onClick = onWifiClick,
+                    modifier = Modifier.weight(1f),
+                    leadingIcon = { Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp)) },
+                    label = { Text(if (wifiConnected) "WIFI · $wifiSsid" else "WIFI", fontSize = 10.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = onSmartSwitchClick,
+                    modifier = Modifier.weight(1f),
+                    leadingIcon = { Icon(Icons.Default.Bolt, null, modifier = Modifier.size(18.dp)) },
+                    label = { Text("SMART SWITCH", fontSize = 10.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                )
+            }
         }
         item { Text(if (connected && telemetry == null) readingStatus else if (!connected) "Not connected. Tap Connect to scan for your battery." else "Live data updates from the connected BMS. Disconnecting clears current readings; saved history remains on this phone.", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 2.dp)) }
     }
