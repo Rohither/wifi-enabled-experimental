@@ -1,0 +1,60 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* neXConnectApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* neXConnectApp.swift */; };
+		A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* ContentView.swift */; };
+		A10000000000000000000004 /* BMSProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* BMSProtocol.swift */; };
+		A10000000000000000000005 /* PowerNexLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006; };
+		A10000000000000000000007 /* PowerNexAboutLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007; };
+		A10000000000000000000008 /* ChanakyaLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008; };
+		A10000000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010; };
+		A10000000000000000000010 /* DockIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011; };
+/* End PBXBuildFile section */
+/* Begin PBXFileReference section */
+		B10000000000000000000001 /* neXConnectApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = neXConnectApp.swift; sourceTree = "<group>"; };
+		B10000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		B10000000000000000000004 /* neXConnect.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = neXConnect.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000005 /* BMSProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BMSProtocol.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* PowerNexLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = PowerNexLogo.png; sourceTree = "<group>"; };
+		B10000000000000000000007 /* PowerNexAboutLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = PowerNexAboutLogo.png; sourceTree = "<group>"; };
+		B10000000000000000000008 /* ChanakyaLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ChanakyaLogo.png; sourceTree = "<group>"; };
+		B10000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B10000000000000000000011 /* DockIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = DockIcon.png; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+/* Begin PBXFrameworksBuildPhase section */
+		C10000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+/* Begin PBXGroup section */
+		D10000000000000000000001 = {isa = PBXGroup; children = (D10000000000000000000002 /* neXConnect */, D10000000000000000000003 /* Products */); sourceTree = "<group>"; };
+		D10000000000000000000002 /* neXConnect */ = {isa = PBXGroup; path = neXConnect; sourceTree = "<group>"; children = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000005, B10000000000000000000006, B10000000000000000000007, B10000000000000000000008, B10000000000000000000010, B10000000000000000000011); };
+		D10000000000000000000003 /* Products */ = {isa = PBXGroup; name = Products; sourceTree = "<group>"; children = (B10000000000000000000004); };
+/* End PBXGroup section */
+/* Begin PBXNativeTarget section */
+		E10000000000000000000001 /* neXConnect */ = {isa = PBXNativeTarget; buildConfigurationList = F10000000000000000000002; buildPhases = (C10000000000000000000001, C10000000000000000000002, C10000000000000000000003); buildRules = (); dependencies = (); name = neXConnect; productName = neXConnect; productReference = B10000000000000000000004; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+/* Begin PBXProject section */
+		E10000000000000000000002 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; }; buildConfigurationList = F10000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = D10000000000000000000001; productRefGroup = D10000000000000000000003; projectDirPath = ""; projectRoot = ""; targets = (E10000000000000000000001); };
+/* End PBXProject section */
+/* Begin PBXResourcesBuildPhase section */
+		C10000000000000000000002 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000005, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, A10000000000000000000010); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+/* Begin PBXSourcesBuildPhase section */
+		C10000000000000000000003 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000004); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+/* Begin XCBuildConfiguration section */
+		F20000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MACOSX_DEPLOYMENT_TARGET = 13.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Debug; };
+		F20000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MACOSX_DEPLOYMENT_TARGET = 13.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Release; };
+		F20000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "neX Connect"; "INFOPLIST_KEY_NSPrincipalClass[sdk=macosx*]" = NSApplication; INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to your Bluetooth battery monitor."; INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "Connect to your Bluetooth battery monitor."; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities"; PRODUCT_BUNDLE_IDENTIFIER = com.powernex.neXConnect; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTS_MACCATALYST = YES; SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; }; name = Debug; };
+		F20000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "neX Connect"; "INFOPLIST_KEY_NSPrincipalClass[sdk=macosx*]" = NSApplication; INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to your Bluetooth battery monitor."; INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "Connect to your Bluetooth battery monitor."; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities"; PRODUCT_BUNDLE_IDENTIFIER = com.powernex.neXConnect; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTS_MACCATALYST = YES; SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; }; name = Release; };
+/* End XCBuildConfiguration section */
+/* Begin XCConfigurationList section */
+		F10000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (F20000000000000000000001, F20000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		F10000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (F20000000000000000000003, F20000000000000000000004); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = E10000000000000000000002 /* Project object */;
+}

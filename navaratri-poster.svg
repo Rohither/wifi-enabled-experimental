@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1824" viewBox="0 0 1400 1824">
+<defs>
+ <linearGradient id="paper" x2="0" y2="1"><stop stop-color="#c3e2f8"/><stop offset="1" stop-color="#a6d1ee"/></linearGradient>
+ <linearGradient id="night" x2="0" y2="1"><stop stop-color="#063c70"/><stop offset=".5" stop-color="#052c55"/><stop offset="1" stop-color="#031c3b"/></linearGradient>
+ <radialGradient id="aura"><stop stop-color="#ffc75d" stop-opacity=".85"/><stop offset=".35" stop-color="#f89532" stop-opacity=".35"/><stop offset="1" stop-color="#ef9c38" stop-opacity="0"/></radialGradient>
+ <linearGradient id="gold" x2="0" y2="1"><stop stop-color="#fff3b4"/><stop offset=".45" stop-color="#f1bb42"/><stop offset="1" stop-color="#ca6c10"/></linearGradient>
+ <linearGradient id="sari" x2="1" y2="1"><stop stop-color="#f9db79"/><stop offset=".48" stop-color="#bb172c"/><stop offset="1" stop-color="#600d26"/></linearGradient>
+ <linearGradient id="whiteSari" x2="1" y2="1"><stop stop-color="#fffdf2"/><stop offset=".55" stop-color="#dfecf5"/><stop offset="1" stop-color="#c7a64e"/></linearGradient>
+ <filter id="blur"><feGaussianBlur stdDeviation="15"/></filter>
+</defs>
+<!-- reference poster frame -->
+<rect width="1400" height="1824" fill="url(#paper)"/>
+<rect x="105" y="82" width="1190" height="1700" fill="#07182c" opacity=".24" filter="url(#blur)"/>
+<rect x="82" y="70" width="1236" height="1700" fill="url(#night)"/>
+<rect x="82" y="70" width="1236" height="1700" fill="none" stroke="#d7e8f6" stroke-width="2"/>
+<!-- warm temple atmosphere -->
+<ellipse cx="713" cy="800" rx="530" ry="490" fill="url(#aura)"/>
+<path d="M100 1350 Q340 1100 570 1360T1000 1320T1300 1350V1650H100Z" fill="#071d35" opacity=".38"/>
+<!-- top details -->
+<g font-family="Kartika,'Noto Sans Malayalam',sans-serif">
+ <text x="170" y="178" fill="#fff7e5" font-size="43" font-weight="bold">താഴപ്പള്ളി ശ്രീ മഹാവിഷ്ണു ക്ഷേത്രം</text>
+ <text x="172" y="225" fill="#e5d3ac" font-size="27">വെങ്ങപ്പറ്റ - കോടേരിച്ചാൽ</text>
+ <text x="172" y="265" fill="#e5d3ac" font-size="23">Reg. No. 355/86</text>
+</g>
+<!-- hanging brass lamp -->
+<g transform="translate(1125 78)">
+ <path d="M0 0V162" stroke="#dbb65e" stroke-width="5"/>
+ <path d="M-35 162 Q0 132 35 162 L24 181H-24Z" fill="#d99c32" stroke="#ffdc7f" stroke-width="3"/>
+ <path d="M-22 183H22L11 200H-11Z" fill="#be7920"/><path d="M0 199V245M-25 245H25M-18 252H18" stroke="#e3b855" stroke-width="4"/>
+ <ellipse cx="0" cy="167" rx="55" ry="15" fill="#d89527" stroke="#ffe08a" stroke-width="4"/>
+ <path d="M0 105 C-24 130 -19 149 0 154 C18 148 22 129 0 105Z" fill="#ffcc50"/>
+ <path d="M-2 143 Q-18 132 -11 116Q-2 125 -2 143" fill="#fff4ae"/>
+</g>
+<!-- halos -->
+<circle cx="510" cy="785" r="228" fill="url(#aura)"/><circle cx="846" cy="850" r="225" fill="url(#aura)"/>
+<g fill="none" stroke="#efc45d" opacity=".75"><circle cx="510" cy="785" r="174" stroke-width="3"/><circle cx="846" cy="850" r="174" stroke-width="3"/></g>
+<!-- stylized Devi, left: crown, face, arms, red sari -->
+<g stroke="#53261e" stroke-width="5" stroke-linejoin="round">
+ <!-- crown -->
+ <path d="M449 621L467 568L492 599L511 537L532 599L556 568L574 622Z" fill="url(#gold)"/>
+ <circle cx="511" cy="585" r="10" fill="#a82824"/>
+ <!-- face and hair -->
+ <path d="M470 630Q511 599 551 630L558 693Q548 728 511 737Q474 727 464 693Z" fill="#d99b70"/>
+ <path d="M465 648Q456 596 510 605Q564 602 557 651L548 634Q513 621 472 644Z" fill="#251a1a"/>
+ <path d="M487 670h12M526 670h12M500 696q11 9 22 0" fill="none" stroke="#442020" stroke-width="4"/>
+ <circle cx="511" cy="650" r="5" fill="#c4212d" stroke="none"/>
+ <!-- torso and sari -->
+ <path d="M474 730Q511 711 548 730L585 897H435Z" fill="url(#sari)"/>
+ <path d="M476 736Q519 797 569 876L544 895Q498 827 464 777Z" fill="url(#gold)" stroke="#ffe39b"/>
+ <path d="M455 758Q397 775 408 837L445 855L475 803M547 757Q603 777 614 827L580 849L543 800" fill="#d99b70"/>
+ <path d="M431 897Q511 876 589 897L633 1060Q512 1115 390 1060Z" fill="url(#sari)"/>
+ <path d="M405 1047Q511 1078 620 1044L634 1062Q514 1113 390 1064Z" fill="url(#gold)"/>
+ <!-- jewelry -->
+ <path d="M482 723Q511 764 540 723M488 748Q511 782 534 748" fill="none" stroke="#ffe48a" stroke-width="8"/>
+ <circle cx="511" cy="783" r="10" fill="#f5ce5f"/>
+</g>
+<!-- left trident -->
+<g stroke="#e5bd5b" stroke-width="8" fill="none" stroke-linecap="round"><path d="M351 697V1000M351 700Q315 673 329 642Q345 657 351 683Q358 651 376 641Q387 674 351 700"/></g>
+<!-- right Saraswati -->
+<g stroke="#51351f" stroke-width="5" stroke-linejoin="round">
+ <path d="M784 704L798 646L824 676L845 615L867 676L895 646L908 709Z" fill="url(#gold)"/>
+ <circle cx="846" cy="670" r="10" fill="#a82824"/>
+ <path d="M811 710Q846 680 880 710L889 769Q877 804 846 811Q815 802 804 769Z" fill="#e4b68e"/>
+ <path d="M804 727Q797 682 847 688Q897 685 889 733L878 716Q843 702 812 722Z" fill="#302323"/>
+ <path d="M825 750h10M858 750h10M837 777q9 7 18 0" fill="none" stroke="#442020" stroke-width="4"/>
+ <circle cx="846" cy="729" r="5" fill="#bf1f2d"/>
+ <!-- shoulders, body, white sari -->
+ <path d="M814 810Q846 795 878 810L926 950H764Z" fill="url(#whiteSari)"/>
+ <path d="M774 936Q846 900 918 936L966 1092Q849 1130 730 1092Z" fill="url(#whiteSari)"/>
+ <path d="M750 1070Q849 1100 948 1070L966 1094Q850 1135 731 1095Z" fill="url(#gold)"/>
+ <path d="M815 816Q782 804 755 840L704 919L736 943L807 888M876 816Q912 804 937 843L965 888L939 914L883 875" fill="#e4b68e"/>
+ <path d="M817 806Q846 852 875 806M822 832Q846 870 870 832" fill="none" stroke="#eac859" stroke-width="8"/>
+</g>
+<!-- veena -->
+<g transform="rotate(-23 847 926)">
+ <ellipse cx="844" cy="1000" rx="47" ry="70" fill="#ad581d" stroke="#f3cb69" stroke-width="8"/>
+ <ellipse cx="844" cy="1000" rx="20" ry="36" fill="#472e20" stroke="#edc45d" stroke-width="4"/>
+ <path d="M844 950L844 791Q846 770 862 765L883 777L864 794V954" fill="#9a4b1f" stroke="#f0c361" stroke-width="7"/>
+ <path d="M853 784L853 1082M858 784L858 1082M865 784L865 1082" stroke="#ffe5a0" stroke-width="2"/>
+ <path d="M838 849H874M838 889H874M838 929H874" stroke="#f7d67b" stroke-width="3"/>
+</g>
+<!-- stage petals / peacock feather flourish -->
+<g fill="#21899a" stroke="#e7bd59" stroke-width="3" opacity=".9">
+ <path d="M1020 1035Q1068 1008 1068 1067Q1044 1090 1020 1035Z"/><path d="M1040 1050Q1100 1038 1080 1100Q1051 1112 1040 1050Z"/>
+ <circle cx="1052" cy="1064" r="11" fill="#1d365d"/>
+</g>
+<!-- lower title and schedule -->
+<g font-family="Kartika,'Noto Sans Malayalam',sans-serif" text-anchor="middle">
+ <text x="700" y="1190" fill="url(#gold)" font-size="67" font-weight="bold">നവരാത്രി മഹോത്സവം</text>
+ <text x="700" y="1238" fill="#fff5da" font-size="27">2026 - ഒക്ടോബർ 18, 19, 20, 21</text>
+ <text x="700" y="1276" fill="#e9c66b" font-size="24">1202 - തുലാം - 1, 2, 3, 4</text>
+</g>
+<!-- four event panels -->
+<g fill="#06284a" fill-opacity=".94" stroke="#e2bd68" stroke-width="2">
+ <rect x="135" y="1300" width="545" height="132" rx="8"/><rect x="720" y="1300" width="545" height="132" rx="8"/>
+ <rect x="135" y="1446" width="545" height="155" rx="8"/><rect x="720" y="1446" width="545" height="155" rx="8"/>
+</g>
+<g font-family="Kartika,'Noto Sans Malayalam',sans-serif" text-anchor="middle">
+ <text x="407" y="1340" fill="#f1cd72" font-size="24" font-weight="bold">2026 ഒക്ടോബർ-18 ഞായർ</text><text x="407" y="1387" fill="#fff" font-size="24">വൈകീട്ട്: ഗ്രന്ഥംവെപ്പ്</text>
+ <text x="992" y="1340" fill="#f1cd72" font-size="24" font-weight="bold">2026 ഒക്ടോബർ-19 തിങ്കൾ</text><text x="992" y="1387" fill="#fff" font-size="27">വിശേഷാൽ പൂജ</text>
+ <text x="407" y="1483" fill="#f1cd72" font-size="27" font-weight="bold">മഹാനവമി</text><text x="407" y="1522" fill="#fff" font-size="23">ഒക്ടോബർ 20 ചൊവ്വ</text><text x="407" y="1561" fill="#fff" font-size="22">വിശേഷാൽ പൂജ,  ഗ്രന്ഥ പൂജ,  വൈകീട്ട്: വാഹനപൂജ</text>
+ <text x="992" y="1483" fill="#f1cd72" font-size="27" font-weight="bold">വിജയദശമി</text><text x="992" y="1522" fill="#fff" font-size="23">ഒക്ടോബർ 21 ബുധൻ</text><text x="992" y="1558" fill="#fff" font-size="21">വിശേഷാൽ പൂജ, ഗ്രന്ഥം എഴുന്നൽപ്പ്,</text><text x="992" y="1588" fill="#fff" font-size="21">വാഹന പൂജ, വിദ്യാരംഭം</text>
+ <text x="700" y="1640" fill="#fff3d2" font-size="23">NB: വിദ്യാരംഭത്തിന് മുൻകൂട്ടി ബുക്ക് ചെയ്യുക.</text><text x="700" y="1680" fill="#e9c66b" font-size="25" font-weight="bold">ക്ഷേത്രകമ്മിറ്റി.</text>
+</g>
+</svg>
+
