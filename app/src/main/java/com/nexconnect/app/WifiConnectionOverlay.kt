@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -75,6 +76,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -108,11 +110,13 @@ internal data class WifiLinkUiState(
 internal class WifiConnectionController(context: Context) {
     private val appContext = context.applicationContext
     private val connectivity = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private val preferences = appContext.getSharedPreferences("nex_wifi_connection", Context.MODE_PRIVATE)
     var state by mutableStateOf(WifiLinkUiState())
         private set
     private var callback: ConnectivityManager.NetworkCallback? = null
 
     val isConnected: Boolean get() = state.connectedSsid != null
+    val savedSsid: String? get() = preferences.getString("saved_ssid", null)
 
     fun connect(accessPoint: WifiAccessPoint, password: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -123,7 +127,6 @@ internal class WifiConnectionController(context: Context) {
             state = state.copy(message = "This network uses enterprise or legacy security that is not supported yet.")
             return
         }
-        disconnect(clearMessage = false)
         val specifierBuilder = WifiNetworkSpecifier.Builder().setSsid(accessPoint.ssid)
         if (accessPoint.secure) {
             if (password.isBlank()) {
@@ -143,6 +146,8 @@ internal class WifiConnectionController(context: Context) {
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .setNetworkSpecifier(specifierBuilder.build())
             .build()
+        disconnect(clearMessage = false, clearSavedNetwork = false)
+        preferences.edit().putString("saved_ssid", accessPoint.ssid).apply()
         state = WifiLinkUiState(connecting = true, message = "Connecting to ${accessPoint.ssid}… approve the Android network prompt if it appears.")
         val networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
@@ -173,10 +178,11 @@ internal class WifiConnectionController(context: Context) {
         }
     }
 
-    fun disconnect(clearMessage: Boolean = true) {
+    fun disconnect(clearMessage: Boolean = true, clearSavedNetwork: Boolean = true) {
         callback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
         callback = null
         connectivity.bindProcessToNetwork(null)
+        if (clearSavedNetwork) preferences.edit().remove("saved_ssid").apply()
         state = WifiLinkUiState(message = if (clearMessage) "Wi-Fi connection cancelled." else state.message)
     }
 }
@@ -186,7 +192,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
     val context = LocalContext.current
     val wifiManager = remember(context) { context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager }
     var accessPoints by remember { mutableStateOf(emptyList<WifiAccessPoint>()) }
-    var selectedSsid by remember { mutableStateOf<String?>(null) }
+    var selectedSsid by remember(controller) { mutableStateOf(controller.savedSsid) }
     var password by remember { mutableStateOf("") }
     var isScanning by remember { mutableStateOf(false) }
     var scanMessage by remember { mutableStateOf("Searching for nearby Wi-Fi networks…") }
@@ -212,7 +218,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         } catch (_: SecurityException) {
             emptyList()
         }
-        if (selectedSsid !in accessPoints.map { it.ssid }) selectedSsid = null
+        if (selectedSsid == null) selectedSsid = controller.savedSsid
     }
 
     @SuppressLint("MissingPermission")
@@ -282,8 +288,8 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         val artworkHeight = maxHeight * .31f
         androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
             val cx = size.width / 2f
-            val cy = size.height * .23f
-            val maxRadius = size.minDimension * .34f
+            val cy = size.height * if (controller.state.connecting) .40f else .23f
+            val maxRadius = size.minDimension * if (controller.state.connecting) .22f else .34f
             repeat(4) { ring ->
                 val progress = (phase + ring * .25f) % 1f
                 val radius = maxRadius * (.38f + progress * .68f)
@@ -295,7 +301,58 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
                 val twinkle = .22f + .42f * kotlin.math.abs(sin((phase * PI + point).toDouble())).toFloat()
                 drawCircle(Color(0xFF65DFF8).copy(alpha = twinkle), 1.7.dp.toPx(), androidx.compose.ui.geometry.Offset(cx + cos(angle) * radius, cy + sin(angle) * radius))
             }
+            if (controller.state.connecting) {
+                repeat(64) { index ->
+                    val angle = phase * 2f * PI.toFloat() + index * (2f * PI.toFloat() / 64f)
+                    val inner = maxRadius * 1.03f
+                    val outer = maxRadius * if (index % 4 == 0) 1.22f else 1.15f
+                    val x1 = cx + cos(angle) * inner
+                    val y1 = cy + sin(angle) * inner
+                    val x2 = cx + cos(angle) * outer
+                    val y2 = cy + sin(angle) * outer
+                    val distance = ((index - (phase * 64f).toInt() + 64) % 64)
+                    drawLine(Color(0xFF50D9FF), androidx.compose.ui.geometry.Offset(x1, y1), androidx.compose.ui.geometry.Offset(x2, y2), 2.dp.toPx(), alpha = if (distance < 18) .98f else .3f, cap = StrokeCap.Round)
+                }
+            }
         }
+        if (controller.state.connecting) {
+            Box(
+                Modifier.align(Alignment.TopCenter).offset(y = maxHeight * .40f - 64.dp)
+                    .size(128.dp).clip(CircleShape)
+                    .background(Brush.radialGradient(listOf(Color(0xFF153D58).copy(alpha = .78f), Color.Transparent))),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Wifi, "Connecting to Wi-Fi", tint = Color(0xFF8AE9FF), modifier = Modifier.size(82.dp).graphicsLayer {
+                    alpha = .72f + .28f * kotlin.math.abs(sin((phase * PI).toDouble())).toFloat()
+                    scaleX = .96f + .06f * kotlin.math.abs(sin((phase * PI).toDouble())).toFloat()
+                    scaleY = scaleX
+                })
+            }
+            Column(
+                Modifier.align(Alignment.TopCenter).offset(y = maxHeight * .40f + 145.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(3) { dot ->
+                        val distance = (phase * 3f + dot) % 3f
+                        Box(Modifier.size(6.dp).alpha(if (distance < 1f) .95f else .3f).clip(CircleShape).background(Color(0xFF50D9FF)))
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                Text("Connecting to ${controller.savedSsid.orEmpty()}…", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(8.dp))
+                Text("${controller.state.message}\nPlease wait", color = Color(0xFF9BBACC), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+            Box(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
+                OutlinedButton(
+                    onClick = { controller.disconnect(); onDismiss() },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(28.dp),
+                    border = BorderStroke(1.4.dp, Color(0xFF5EE1F5)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) { Text("Cancel connection", fontWeight = FontWeight.SemiBold) }
+            }
+        } else {
         Column(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 10.dp, bottom = 92.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -427,6 +484,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             ) {
                 Text(if (controller.isConnected) "Disconnect Wi-Fi" else if (controller.state.connecting) "Cancel connection" else "Cancel", fontWeight = FontWeight.SemiBold)
             }
+        }
         }
     }
 }
