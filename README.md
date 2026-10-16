@@ -10,6 +10,12 @@ The BLE layer identifies common DALY-style GATT channels, tries D2 Modbus BLE re
 
 The setup screen follows the reference app's protection, cell, acquisition-board, temperature, and system sections. These setup values are saved locally only; BMS parameter writes are not enabled. Inverter protocol selection is separate from BMS Bluetooth telemetry.
 
+## Wi-Fi device connection
+
+The Monitor tab includes a Wi-Fi button for scanning nearby networks and joining an inverter or meter network. Secured networks prompt for a password, and Android may show its system approval prompt before connecting. The password is not saved by the app. Android 10 or newer is required for an in-app local network request. Wi-Fi scanning may require the nearby-device and location permissions, depending on Android version.
+
+This connection setup joins the selected Wi-Fi network for local device communication; it does not yet decode inverter or meter telemetry. Reading data requires a verified device model and protocol/API details. The app does not claim a Wi-Fi device is telemetry-connected until that integration exists.
+
 ## Build
 
 Open this folder in Android Studio and sync with Gradle. The project targets Android 8.0+ (API 26) and uses Jetpack Compose. Android SDK platform 37 is configured.

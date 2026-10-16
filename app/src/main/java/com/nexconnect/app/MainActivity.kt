@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalView
@@ -159,6 +160,8 @@ private fun NexApp() {
     var tab by remember { mutableStateOf(0) }
     var showSplash by remember { mutableStateOf(true) }
     var showConnectionInfo by remember { mutableStateOf(false) }
+    var showWifiOverlay by remember { mutableStateOf(false) }
+    val wifiController = remember(context) { WifiConnectionController(context.applicationContext) }
     var darkTheme by remember(context) { mutableStateOf(AppSettingsStore.darkTheme(context)) }
     var selectedBleSlot by remember { mutableIntStateOf(0) }
     val slotConnected = remember { mutableStateListOf(false, false, false) }
@@ -200,21 +203,23 @@ private fun NexApp() {
     val view = LocalView.current
     SideEffect {
         val window = (view.context as? Activity)?.window
-        window?.statusBarColor = palette.page.toArgb()
-        window?.navigationBarColor = palette.page.toArgb()
+        window?.statusBarColor = (if (showWifiOverlay) Color(0xFF090C25) else palette.page).toArgb()
+        window?.navigationBarColor = (if (showWifiOverlay) Color(0xFF090C25) else palette.page).toArgb()
         window?.let {
-            WindowInsetsControllerCompat(it, view).isAppearanceLightStatusBars = !darkTheme
-            WindowInsetsControllerCompat(it, view).isAppearanceLightNavigationBars = !darkTheme
+            WindowInsetsControllerCompat(it, view).isAppearanceLightStatusBars = !darkTheme && !showWifiOverlay
+            WindowInsetsControllerCompat(it, view).isAppearanceLightNavigationBars = !darkTheme && !showWifiOverlay
         }
     }
     MaterialTheme(colorScheme = if (darkTheme) darkColorScheme(primary = palette.teal, background = palette.page, surface = palette.card) else lightColorScheme(primary = palette.teal, background = palette.page, surface = palette.card)) {
         Scaffold(
             containerColor = Page,
             bottomBar = {
-                NavigationBar(containerColor = CardSurface) {
-                    listOf("Monitor", "History", "Settings", "About").forEachIndexed { index, title ->
-                        val icon = when (index) { 0 -> Icons.Default.Home; 1 -> Icons.Default.History; 2 -> Icons.Default.Settings; else -> Icons.Default.Info }
-                        NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Icon(icon, null) }, label = { Text(title) })
+                if (!showWifiOverlay) {
+                    NavigationBar(containerColor = CardSurface) {
+                        listOf("Monitor", "History", "Settings", "About").forEachIndexed { index, title ->
+                            val icon = when (index) { 0 -> Icons.Default.Home; 1 -> Icons.Default.History; 2 -> Icons.Default.Settings; else -> Icons.Default.Info }
+                            NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Icon(icon, null) }, label = { Text(title) })
+                        }
                     }
                 }
             }
@@ -264,8 +269,15 @@ private fun NexApp() {
                 ) { page ->
                     Box(Modifier.fillMaxSize().then(if (page == 2) Modifier else Modifier.background(Page))) {
                         when (page) {
-                            0 -> MonitorScreen(padding, liveTelemetry, bleConnected, connectedBatteryName, bleActivity, bleReadStatus,
-                                slotBatteryNames, slotConnected, selectedBleSlot, { selectedBleSlot = it }) { tab = 2 }
+                            0 -> MonitorScreen(
+                                padding, liveTelemetry, bleConnected, connectedBatteryName, bleActivity, bleReadStatus,
+                                slotBatteryNames, slotConnected, selectedBleSlot,
+                                onSelectSlot = { selectedBleSlot = it },
+                                onConnect = { tab = 2 },
+                                wifiConnected = wifiController.state.connectedSsid != null,
+                                wifiSsid = wifiController.state.connectedSsid.orEmpty(),
+                                onWifiClick = { showWifiOverlay = true }
+                            )
                             1 -> HistoryPage(padding, context, historyRevision[selectedBleSlot], selectedBleSlot) { BatteryHistoryStore.clear(context, selectedBleSlot); historyRevision[selectedBleSlot]++ }
                             2 -> Spacer(Modifier.fillMaxSize()) // SettingsPage remains composed beneath this layer to own all BLE links.
                             else -> AboutPage(padding)
@@ -281,6 +293,7 @@ private fun NexApp() {
         ) {
             BluetoothSearchOverlay { slotSearchCancelSignal[selectedBleSlot]++ }
         }
+        if (showWifiOverlay) WifiConnectionOverlay(wifiController) { showWifiOverlay = false }
         if (showConnectionInfo) AlertDialog(
             onDismissRequest = { showConnectionInfo = false },
             title = { Text("Connection setup") },
@@ -627,7 +640,7 @@ private fun BluetoothSearchOverlay(onCancel: () -> Unit) {
 }
 
 @Composable
-private fun MonitorScreen(padding: PaddingValues, telemetry: BmsTelemetry?, connected: Boolean, batteryName: String, bluetoothActivity: Boolean, readingStatus: String, slotNames: List<String>, slotConnections: List<Boolean>, selectedSlot: Int, onSelectSlot: (Int) -> Unit, onConnect: () -> Unit) {
+private fun MonitorScreen(padding: PaddingValues, telemetry: BmsTelemetry?, connected: Boolean, batteryName: String, bluetoothActivity: Boolean, readingStatus: String, slotNames: List<String>, slotConnections: List<Boolean>, selectedSlot: Int, onSelectSlot: (Int) -> Unit, onConnect: () -> Unit, wifiConnected: Boolean, wifiSsid: String, onWifiClick: () -> Unit) {
     val soc = telemetry?.socPercent
     val progressColor = when {
         soc == null -> Teal
@@ -746,6 +759,15 @@ private fun MonitorScreen(padding: PaddingValues, telemetry: BmsTelemetry?, conn
                     )
                 }
             }
+        }
+        item {
+            FilterChip(
+                selected = wifiConnected,
+                onClick = onWifiClick,
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp)) },
+                label = { Text(if (wifiConnected) "WIFI · $wifiSsid" else "WIFI", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+            )
         }
         item { Text(if (connected && telemetry == null) readingStatus else if (!connected) "Not connected. Tap Connect to scan for your battery." else "Live data updates from the connected BMS. Disconnecting clears current readings; saved history remains on this phone.", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 2.dp)) }
     }
