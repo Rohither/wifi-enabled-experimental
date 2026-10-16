@@ -13,8 +13,12 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.view.Surface
+import android.view.TextureView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -86,6 +90,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -316,33 +321,38 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             }
         }
         if (controller.state.connecting) {
-            Box(
-                Modifier.align(Alignment.TopCenter).offset(y = maxHeight * .40f - 64.dp)
-                    .size(128.dp).clip(CircleShape)
-                    .background(Brush.radialGradient(listOf(Color(0xFF153D58).copy(alpha = .78f), Color.Transparent))),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Wifi, "Connecting to Wi-Fi", tint = Color(0xFF8AE9FF), modifier = Modifier.size(82.dp).graphicsLayer {
-                    alpha = .72f + .28f * kotlin.math.abs(sin((phase * PI).toDouble())).toFloat()
-                    scaleX = .96f + .06f * kotlin.math.abs(sin((phase * PI).toDouble())).toFloat()
-                    scaleY = scaleX
-                })
-            }
-            Column(
-                Modifier.align(Alignment.TopCenter).offset(y = maxHeight * .40f + 145.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    repeat(3) { dot ->
-                        val distance = (phase * 3f + dot) % 3f
-                        Box(Modifier.size(6.dp).alpha(if (distance < 1f) .95f else .3f).clip(CircleShape).background(Color(0xFF50D9FF)))
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { viewContext ->
+                    TextureView(viewContext).apply {
+                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                            override fun onSurfaceTextureAvailable(texture: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                val player = MediaPlayer()
+                                val surface = Surface(texture)
+                                setTag(player)
+                                player.setSurface(surface)
+                                player.setDataSource(viewContext, Uri.parse("android.resource://${viewContext.packageName}/${R.raw.wifi_connecting_animation}"))
+                                player.isLooping = true
+                                player.setVolume(0f, 0f)
+                                player.setOnPreparedListener { it.start() }
+                                player.setOnErrorListener { mediaPlayer, _, _ -> mediaPlayer.release(); setTag(null); true }
+                                player.prepareAsync()
+                            }
+                            override fun onSurfaceTextureSizeChanged(texture: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+                            override fun onSurfaceTextureUpdated(texture: android.graphics.SurfaceTexture) = Unit
+                            override fun onSurfaceTextureDestroyed(texture: android.graphics.SurfaceTexture): Boolean {
+                                (getTag() as? MediaPlayer)?.let { runCatching { it.release() } }
+                                setTag(null)
+                                return true
+                            }
+                        }
                     }
+                },
+                onRelease = { view ->
+                    (view.getTag() as? MediaPlayer)?.let { runCatching { it.release() } }
+                    view.setTag(null)
                 }
-                Spacer(Modifier.height(18.dp))
-                Text("Connecting to ${controller.savedSsid.orEmpty()}…", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(8.dp))
-                Text("${controller.state.message}\nPlease wait", color = Color(0xFF9BBACC), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            }
+            )
             Box(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
                 OutlinedButton(
                     onClick = { controller.disconnect(); onDismiss() },
