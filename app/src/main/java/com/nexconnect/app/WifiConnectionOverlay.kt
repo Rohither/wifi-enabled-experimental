@@ -1,18 +1,10 @@
 package com.nexconnect.app
 
-import android.Manifest
-import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
-import android.net.wifi.WifiManager
-import android.net.wifi.WifiNetworkSpecifier
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -31,7 +23,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -53,22 +44,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,7 +61,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -86,24 +70,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
-import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
-
-internal data class WifiAccessPoint(
-    val ssid: String,
-    val signalLevel: Int,
-    val secure: Boolean,
-    val wpa3Only: Boolean,
-    val unsupportedSecurity: Boolean
-)
 
 internal data class WifiLinkUiState(
     val connecting: Boolean = false,
@@ -118,171 +91,82 @@ internal class WifiConnectionController(context: Context) {
     private val preferences = appContext.getSharedPreferences("nex_wifi_connection", Context.MODE_PRIVATE)
     var state by mutableStateOf(WifiLinkUiState())
         private set
-    private var callback: ConnectivityManager.NetworkCallback? = null
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) markWifiConnected()
+            else refreshActiveNetwork()
+        }
+        override fun onLost(network: Network) {
+            val wasConnected = isConnected
+            refreshActiveNetwork()
+            if (wasConnected && !isConnected) preferences.edit().remove("saved_ssid").apply()
+        }
+        override fun onAvailable(network: Network) { refreshActiveNetwork() }
+    }
+
+    init {
+        runCatching { connectivity.registerDefaultNetworkCallback(networkCallback) }
+        refreshActiveNetwork()
+    }
 
     val isConnected: Boolean get() = state.connectedSsid != null
     val savedSsid: String? get() = preferences.getString("saved_ssid", null)
 
-    fun connect(accessPoint: WifiAccessPoint, password: String) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            state = state.copy(message = "Android 10 or newer is needed to connect to a device network here. Use Android Wi-Fi settings on this phone.")
-            return
-        }
-        if (accessPoint.unsupportedSecurity) {
-            state = state.copy(message = "This network uses enterprise or legacy security that is not supported yet.")
-            return
-        }
-        val specifierBuilder = WifiNetworkSpecifier.Builder().setSsid(accessPoint.ssid)
-        if (accessPoint.secure) {
-            if (password.isBlank()) {
-                state = state.copy(message = "Enter the Wi-Fi password to continue.")
-                return
-            }
-            try {
-                if (accessPoint.wpa3Only) specifierBuilder.setWpa3Passphrase(password)
-                else specifierBuilder.setWpa2Passphrase(password)
-            } catch (_: IllegalArgumentException) {
-                state = state.copy(message = "Check the password and try again.")
-                return
-            }
-        }
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .setNetworkSpecifier(specifierBuilder.build())
-            .build()
-        disconnect(clearMessage = false, clearSavedNetwork = false)
-        preferences.edit().putString("saved_ssid", accessPoint.ssid).apply()
-        state = WifiLinkUiState(connecting = true, message = "Connecting to ${accessPoint.ssid}… approve the Android network prompt if it appears.")
-        val networkCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                connectivity.bindProcessToNetwork(network)
-                state = WifiLinkUiState(connectedSsid = accessPoint.ssid, message = "Connected to ${accessPoint.ssid}. This link is ready for local device communication.")
-            }
+    fun beginSystemPicker() {
+        state = state.copy(connecting = true, message = "Choose a nearby Wi-Fi network and enter its password in Android settings.")
+    }
 
-            override fun onUnavailable() {
-                state = WifiLinkUiState(message = "Could not connect. Check the password and make sure the device is nearby.")
-                callback = null
-            }
-
-            override fun onLost(network: Network) {
-                if (connectivity.boundNetworkForProcess == network) connectivity.bindProcessToNetwork(null)
-                state = WifiLinkUiState(message = "The Wi-Fi connection was lost. Select the network to reconnect.")
-                callback = null
-            }
+    fun finishSystemPicker() {
+        refreshActiveNetwork()
+        if (isConnected) {
+            state = state.copy(connecting = false, message = "Connected to Wi-Fi. Your phone will remember this network until you disconnect it.")
+        } else {
+            preferences.edit().remove("saved_ssid").apply()
+            state = state.copy(connecting = false, message = "No Wi-Fi connection detected. Select a network and enter its password to connect.")
         }
-        callback = networkCallback
-        try {
-            connectivity.requestNetwork(request, networkCallback, 30_000)
-        } catch (_: SecurityException) {
-            callback = null
-            state = WifiLinkUiState(message = "Wi-Fi permission is needed to connect to this network.")
-        } catch (_: RuntimeException) {
-            callback = null
-            state = WifiLinkUiState(message = "Could not start the Wi-Fi connection. Try again.")
+    }
+
+    private fun markWifiConnected() {
+        val ssid = savedSsid ?: "Connected Wi-Fi"
+        if (savedSsid == null) preferences.edit().putString("saved_ssid", ssid).apply()
+        state = WifiLinkUiState(connectedSsid = ssid, message = "Connected to Wi-Fi. Your phone will remember this network until you disconnect it.")
+    }
+
+    fun refreshActiveNetwork() {
+        val active = runCatching { connectivity.getNetworkCapabilities(connectivity.activeNetwork) }.getOrNull()
+        if (active?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) markWifiConnected()
+        else if (!state.connecting) {
+            state = state.copy(connectedSsid = null, message = if (savedSsid != null) "Saved Wi-Fi network: ${savedSsid}. Select it in Android Wi-Fi settings to reconnect." else "Choose an available Wi-Fi network to connect.")
         }
     }
 
     fun disconnect(clearMessage: Boolean = true, clearSavedNetwork: Boolean = true) {
-        callback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
-        callback = null
-        connectivity.bindProcessToNetwork(null)
         if (clearSavedNetwork) preferences.edit().remove("saved_ssid").apply()
-        state = WifiLinkUiState(message = if (clearMessage) "Wi-Fi connection cancelled." else state.message)
+        refreshActiveNetwork()
+        if (clearMessage && !isConnected) state = WifiLinkUiState(message = "Wi-Fi connection cancelled.")
     }
 }
 
 @Composable
 internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val wifiManager = remember(context) { context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager }
-    var accessPoints by remember { mutableStateOf(emptyList<WifiAccessPoint>()) }
-    var selectedSsid by remember(controller) { mutableStateOf(controller.savedSsid) }
-    var password by remember { mutableStateOf("") }
-    var isScanning by remember { mutableStateOf(false) }
-    var scanMessage by remember { mutableStateOf("Searching for nearby Wi-Fi networks…") }
-    val selected = accessPoints.firstOrNull { it.ssid == selectedSsid }
-
-    @SuppressLint("MissingPermission")
-    fun readScanResults() {
-        accessPoints = try {
-            wifiManager.scanResults
-                .mapNotNull { result ->
-                    val ssid = result.SSID?.trim().orEmpty()
-                    if (ssid.isBlank()) return@mapNotNull null
-                    val capabilities = result.capabilities.orEmpty().uppercase()
-                    val sae = "SAE" in capabilities
-                    val psk = "PSK" in capabilities
-                    val wep = "WEP" in capabilities
-                    val enterprise = "EAP" in capabilities
-                    WifiAccessPoint(ssid, result.level, sae || psk || wep || enterprise, sae && !psk, wep || enterprise)
-                }
-                .groupBy { it.ssid }
-                .map { (_, entries) -> entries.maxBy { it.signalLevel } }
-                .sortedByDescending { it.signalLevel }
-        } catch (_: SecurityException) {
-            emptyList()
-        }
-        if (selectedSsid == null) selectedSsid = controller.savedSsid
-    }
-
-    @SuppressLint("MissingPermission")
-    fun scanNow() {
-        if (!wifiManager.isWifiEnabled) {
-            isScanning = false
-            scanMessage = "Turn on Wi-Fi to find nearby networks."
-            return
-        }
-        isScanning = true
-        scanMessage = "Searching for nearby Wi-Fi networks…"
-        val scanStarted = try { wifiManager.startScan() } catch (_: SecurityException) { false }
-        readScanResults()
-        if (!scanStarted) {
-            isScanning = false
-            scanMessage = if (accessPoints.isEmpty()) "Wi-Fi scan is unavailable right now. Tap Refresh to try again." else "Showing recently found networks."
-        }
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.all { it }) scanNow()
-        else {
-            isScanning = false
-            scanMessage = "Allow nearby-device and location access to list Wi-Fi networks."
-        }
-    }
     val settingsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        scanNow()
+        controller.finishSystemPicker()
     }
-    fun requestScan() {
-        val required = mutableListOf<String>()
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            required += Manifest.permission.ACCESS_FINE_LOCATION
+    fun openSystemWifiPicker() {
+        controller.beginSystemPicker()
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            Intent(Settings.Panel.ACTION_WIFI)
+        } else {
+            Intent(Settings.ACTION_WIFI_SETTINGS)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED
-        ) required += Manifest.permission.NEARBY_WIFI_DEVICES
-        if (required.isEmpty()) scanNow() else permissionLauncher.launch(required.toTypedArray())
-    }
-
-    DisposableEffect(context, wifiManager) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
-                    readScanResults()
-                    isScanning = false
-                    scanMessage = if (accessPoints.isEmpty()) "No Wi-Fi networks found nearby." else "Select a Wi-Fi network to continue."
-                }
-            }
+        runCatching { settingsLauncher.launch(intent) }.onFailure {
+            controller.finishSystemPicker()
         }
-        ContextCompat.registerReceiver(context, receiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
-        onDispose { runCatching { context.unregisterReceiver(receiver) } }
     }
-    LaunchedEffect(Unit) { requestScan() }
     BackHandler {
-        if (controller.isConnected) onDismiss() else {
-            controller.disconnect()
-            onDismiss()
-        }
+        controller.finishSystemPicker()
+        onDismiss()
     }
 
     val transition = rememberInfiniteTransition(label = "Wi-Fi connection animation")
@@ -379,7 +263,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
                 }
             )
             Text("Connect to Wi-Fi", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Text("Select the network used by your inverter or device", color = Color(0xFF9BADE1), fontSize = 13.sp)
+            Text("Choose a nearby network and enter its password", color = Color(0xFF9BADE1), fontSize = 13.sp)
             Spacer(Modifier.height(12.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -388,85 +272,18 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
                 colors = CardDefaults.cardColors(containerColor = Color(0xCC111735))
             ) {
                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Wifi, null, tint = Color(0xFF54DDF5), modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Available networks", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        }
-                        TextButton(onClick = { requestScan() }) {
-                            if (isScanning) CircularProgressIndicator(Modifier.size(16.dp), color = Color(0xFF57DFFC), strokeWidth = 2.dp)
-                            else Icon(Icons.Default.Refresh, "Refresh networks", tint = Color(0xFF57DFFC), modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(5.dp))
-                            Text("Refresh", color = Color(0xFF80E8F5), fontSize = 12.sp)
-                        }
-                    }
-                    Text(scanMessage, color = Color(0xFFA9B6D5), fontSize = 11.sp)
-                    if (accessPoints.isEmpty()) {
-                        OutlinedButton(onClick = {
-                            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Intent(Settings.Panel.ACTION_WIFI) else Intent(Settings.ACTION_WIFI_SETTINGS)
-                            settingsLauncher.launch(intent)
-                        }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
-                            Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (wifiManager.isWifiEnabled) "Open Wi-Fi settings" else "Turn on Wi-Fi")
-                        }
-                    } else {
-                        Column(Modifier.fillMaxWidth().height(148.dp).verticalScroll(rememberScrollState())) {
-                            accessPoints.take(8).forEach { point ->
-                                val chosen = point.ssid == selectedSsid
-                                Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (chosen) Color(0xFF123F58).copy(alpha = .82f) else Color.Transparent)
-                                        .clickable { selectedSsid = point.ssid; password = "" }.padding(horizontal = 10.dp, vertical = 9.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.Wifi, null, tint = if (chosen) Color(0xFF5BE5F8) else Color(0xFF9BB3D0), modifier = Modifier.size(19.dp))
-                                    Spacer(Modifier.width(9.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(point.ssid, color = Color.White, fontSize = 13.sp, fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(when { point.unsupportedSecurity -> "Unsupported security"; point.secure -> if (point.wpa3Only) "WPA3 secured" else "Password protected"; else -> "Open network" }, color = Color(0xFFAAB8D2), fontSize = 10.sp)
-                                    }
-                                    Text("●".repeat((WifiManager.calculateSignalLevel(point.signalLevel, 4) + 1).coerceIn(1, 4)), color = Color(0xFF5BDCF4), fontSize = 9.sp)
-                                }
-                            }
-                        }
-                    }
-                    if (selected != null && selected.secure) {
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Wi-Fi password") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            enabled = !controller.state.connecting,
-                            colors = TextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedContainerColor = Color(0xFF0C1430),
-                                unfocusedContainerColor = Color(0xFF0C1430),
-                                focusedIndicatorColor = Color(0xFF56DDF5),
-                                unfocusedIndicatorColor = Color(0xFF526180),
-                                focusedLabelColor = Color(0xFF73E5F4),
-                                unfocusedLabelColor = Color(0xFF9BAED0),
-                                cursorColor = Color(0xFF73E5F4)
-                            ),
-                            shape = RoundedCornerShape(14.dp)
-                        )
-                    }
-                    if (selected != null && !selected.unsupportedSecurity && !controller.isConnected) {
-                        Button(
-                            onClick = { controller.connect(selected, password) },
-                            enabled = !controller.state.connecting && (!selected.secure || password.isNotBlank()),
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF208CB8), contentColor = Color.White)
-                        ) {
-                            if (controller.state.connecting) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-                            else Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (controller.state.connecting) "Connecting…" else "Connect to ${selected.ssid}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                    Icon(Icons.Default.Wifi, null, tint = Color(0xFF54DDF5), modifier = Modifier.size(28.dp))
+                    Text("Use your phone’s Wi-Fi picker", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    Text("Available networks and password entry are handled by Android. neXconnect will not request location access.", color = Color(0xFFA9B6D5), fontSize = 12.sp)
+                    Button(
+                        onClick = { openSystemWifiPicker() },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF208CB8), contentColor = Color.White)
+                    ) {
+                        Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (controller.isConnected) "Change Wi-Fi network" else "Choose Wi-Fi network")
                     }
                 }
             }
@@ -483,16 +300,15 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
             OutlinedButton(
                 onClick = {
-                    controller.disconnect()
-                    password = ""
-                    onDismiss()
+                    if (controller.isConnected) openSystemWifiPicker()
+                    else { controller.disconnect(); onDismiss() }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(28.dp),
                 border = BorderStroke(1.4.dp, Color(0xFF5EE1F5)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
             ) {
-                Text(if (controller.isConnected) "Disconnect Wi-Fi" else if (controller.state.connecting) "Cancel connection" else "Cancel", fontWeight = FontWeight.SemiBold)
+                Text(if (controller.isConnected) "Manage or disconnect Wi-Fi" else if (controller.state.connecting) "Cancel connection" else "Cancel", fontWeight = FontWeight.SemiBold)
             }
         }
         }
