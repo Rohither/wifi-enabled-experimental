@@ -1,19 +1,36 @@
 package com.nexconnect.app
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.companion.AssociationRequest
+import android.companion.CompanionDeviceManager
+import android.companion.WifiDeviceFilter
 import android.content.Context
 import android.content.Intent
+import android.content.IntentSender
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.ScanResult
+import android.net.wifi.WifiManager
+import android.net.wifi.WifiNetworkSpecifier
+import android.net.wifi.WifiNetworkSuggestion
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
-import android.provider.Settings
+import android.os.Handler
+import android.os.Looper
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import android.view.Surface
 import android.view.TextureView
+import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.IntentSenderRequest
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -51,6 +68,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,6 +76,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -74,9 +93,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import org.json.JSONObject
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 internal data class WifiLinkUiState(
     val connecting: Boolean = false,
@@ -84,22 +110,58 @@ internal data class WifiLinkUiState(
     val message: String = "Choose the Wi-Fi network used by your inverter or device."
 )
 
-/** Holds the selected local Wi-Fi network while the screen is dismissed. */
+private data class SavedWifiCredentials(val ssid: String, val password: String, val secured: Boolean, val wpa3: Boolean)
+
+/** Encrypt Wi-Fi names and passwords with a device-local Android Keystore key. */
+private class WifiCredentialStore(context: Context) {
+    private val prefs = context.applicationContext.getSharedPreferences("nex_wifi_credentials", Context.MODE_PRIVATE)
+    private val alias = "nexconnect_wifi_credentials_v1"
+
+    private fun key(): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (store.getKey(alias, null) as? SecretKey)?.let { return it }
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setRandomizedEncryptionRequired(true).build())
+        return generator.generateKey()
+    }
+
+    fun save(credentials: SavedWifiCredentials) {
+        val clear = JSONObject().put("ssid", credentials.ssid).put("password", credentials.password)
+            .put("secured", credentials.secured).put("wpa3", credentials.wpa3).toString().toByteArray(Charsets.UTF_8)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+        val encrypted = cipher.iv + cipher.doFinal(clear)
+        prefs.edit().putString("credential_blob", Base64.encodeToString(encrypted, Base64.NO_WRAP)).apply()
+    }
+
+    fun load(): SavedWifiCredentials? = runCatching {
+        val data = Base64.decode(prefs.getString("credential_blob", null), Base64.NO_WRAP)
+        val iv = data.copyOfRange(0, 12)
+        val encrypted = data.copyOfRange(12, data.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv)) }
+        val json = JSONObject(String(cipher.doFinal(encrypted), Charsets.UTF_8))
+        SavedWifiCredentials(json.getString("ssid"), json.getString("password"), json.getBoolean("secured"), json.getBoolean("wpa3"))
+    }.getOrNull()
+
+    fun clear() { prefs.edit().remove("credential_blob").apply() }
+}
+
+/** Owns the active Wi-Fi request and encrypted saved-network credentials. */
 internal class WifiConnectionController(context: Context) {
     private val appContext = context.applicationContext
     private val connectivity = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    private val preferences = appContext.getSharedPreferences("nex_wifi_connection", Context.MODE_PRIVATE)
+    private val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private val credentials = WifiCredentialStore(appContext)
     var state by mutableStateOf(WifiLinkUiState())
         private set
+    private var requestCallback: ConnectivityManager.NetworkCallback? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) markWifiConnected()
             else refreshActiveNetwork()
         }
         override fun onLost(network: Network) {
-            val wasConnected = isConnected
             refreshActiveNetwork()
-            if (wasConnected && !isConnected) preferences.edit().remove("saved_ssid").apply()
         }
         override fun onAvailable(network: Network) { refreshActiveNetwork() }
     }
@@ -110,25 +172,99 @@ internal class WifiConnectionController(context: Context) {
     }
 
     val isConnected: Boolean get() = state.connectedSsid != null
-    val savedSsid: String? get() = preferences.getString("saved_ssid", null)
+    val savedSsid: String? get() = credentials.load()?.ssid
 
-    fun beginSystemPicker() {
-        state = state.copy(connecting = true, message = "Choose a nearby Wi-Fi network and enter its password in Android settings.")
+    @SuppressLint("MissingPermission")
+    fun connect(ssid: String, password: String, secured: Boolean, wpa3: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            state = state.copy(message = "Direct Wi-Fi connection requires Android 10 or newer. Use Android Wi-Fi settings to connect.")
+            return
+        }
+        if (ssid.isBlank() || (secured && password.isBlank())) {
+            state = state.copy(message = "Select a Wi-Fi network and enter its password.")
+            return
+        }
+        val saved = SavedWifiCredentials(ssid, password, secured, wpa3)
+        try {
+            val specifierBuilder = WifiNetworkSpecifier.Builder().setSsid(ssid)
+            if (secured) {
+                if (wpa3) specifierBuilder.setWpa3Passphrase(password) else specifierBuilder.setWpa2Passphrase(password)
+            }
+            val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).setNetworkSpecifier(specifierBuilder.build()).build()
+            requestCallback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
+            state = WifiLinkUiState(connecting = true, message = "Connecting to $ssid… approve the Android Wi-Fi request if shown.")
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    connectivity.bindProcessToNetwork(network)
+                    val autoJoinReady = runCatching { credentials.save(saved); registerAutoJoin(saved) }.getOrDefault(false)
+                    state = WifiLinkUiState(
+                        connectedSsid = ssid,
+                        message = if (autoJoinReady) "Connected to $ssid. Credentials are encrypted; Android can reconnect automatically next time."
+                        else "Connected to $ssid. Credentials are encrypted and saved on this device; Android auto-join could not be enabled."
+                    )
+                }
+                override fun onUnavailable() {
+                    state = WifiLinkUiState(message = "Could not connect to $ssid. Check the password and signal, then retry.")
+                    requestCallback = null
+                }
+                override fun onLost(network: Network) {
+                    if (connectivity.boundNetworkForProcess == network) connectivity.bindProcessToNetwork(null)
+                    state = WifiLinkUiState(message = "Wi-Fi connection lost. Select the saved network to reconnect.")
+                    requestCallback = null
+                }
+            }
+            requestCallback = callback
+            connectivity.requestNetwork(request, callback, 30_000)
+        } catch (_: IllegalArgumentException) {
+            state = WifiLinkUiState(message = "This Wi-Fi password or security mode is not supported.")
+        } catch (_: SecurityException) {
+            state = WifiLinkUiState(message = "Allow nearby Wi-Fi access to connect. No location permission is requested.")
+        } catch (_: RuntimeException) {
+            state = WifiLinkUiState(message = "Could not start the Wi-Fi connection. Try again.")
+        }
     }
 
-    fun finishSystemPicker() {
-        refreshActiveNetwork()
-        if (isConnected) {
-            state = state.copy(connecting = false, message = "Connected to Wi-Fi. Your phone will remember this network until you disconnect it.")
-        } else {
-            preferences.edit().remove("saved_ssid").apply()
-            state = state.copy(connecting = false, message = "No Wi-Fi connection detected. Select a network and enter its password to connect.")
+    @SuppressLint("MissingPermission")
+    private fun registerAutoJoin(saved: SavedWifiCredentials): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return runCatching {
+            val builder = WifiNetworkSuggestion.Builder().setSsid(saved.ssid)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) builder.setIsInitialAutojoinEnabled(true)
+            if (saved.secured) {
+                if (saved.wpa3) builder.setWpa3Passphrase(saved.password) else builder.setWpa2Passphrase(saved.password)
+            }
+            wifiManager.addNetworkSuggestions(listOf(builder.build())) == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS
+        }.getOrDefault(false)
+    }
+
+    fun startDiscovery(onFound: (IntentSender) -> Unit, onFailure: (String) -> Unit) {
+        val manager = appContext.getSystemService(Context.COMPANION_DEVICE_SERVICE) as? CompanionDeviceManager
+        if (manager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            onFailure("Wi-Fi device discovery is unavailable on this phone. Open Android Wi-Fi settings instead.")
+            return
+        }
+        if (!appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_COMPANION_DEVICE_SETUP)) {
+            onFailure("This phone does not support Android's no-location Wi-Fi picker. Open Android Wi-Fi settings instead.")
+            return
+        }
+        state = state.copy(message = "Searching nearby Wi-Fi networks…")
+        val request = AssociationRequest.Builder().addDeviceFilter(WifiDeviceFilter.Builder().build()).build()
+        try {
+            @Suppress("DEPRECATION")
+            manager.associate(request, object : CompanionDeviceManager.Callback() {
+                override fun onDeviceFound(chooserLauncher: IntentSender) = onFound(chooserLauncher)
+                override fun onFailure(error: CharSequence?) = onFailure(error?.toString() ?: "Wi-Fi discovery failed. Try again.")
+            }, Handler(Looper.getMainLooper()))
+        } catch (error: SecurityException) {
+            onFailure("Android could not scan for Wi-Fi. Turn on Location Services for Android's system scan; neXconnect will not ask for location permission.")
+        } catch (_: RuntimeException) {
+            onFailure("Could not start Wi-Fi discovery. Try again or use Android Wi-Fi settings.")
         }
     }
 
     private fun markWifiConnected() {
         val ssid = savedSsid ?: "Connected Wi-Fi"
-        if (savedSsid == null) preferences.edit().putString("saved_ssid", ssid).apply()
         state = WifiLinkUiState(connectedSsid = ssid, message = "Connected to Wi-Fi. Your phone will remember this network until you disconnect it.")
     }
 
@@ -136,12 +272,24 @@ internal class WifiConnectionController(context: Context) {
         val active = runCatching { connectivity.getNetworkCapabilities(connectivity.activeNetwork) }.getOrNull()
         if (active?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) markWifiConnected()
         else if (!state.connecting) {
-            state = state.copy(connectedSsid = null, message = if (savedSsid != null) "Saved Wi-Fi network: ${savedSsid}. Select it in Android Wi-Fi settings to reconnect." else "Choose an available Wi-Fi network to connect.")
+            state = state.copy(connectedSsid = null, message = if (savedSsid != null) "Saved Wi-Fi network: ${savedSsid}. Select it to reconnect." else "Choose an available Wi-Fi network to connect.")
         }
     }
 
     fun disconnect(clearMessage: Boolean = true, clearSavedNetwork: Boolean = true) {
-        if (clearSavedNetwork) preferences.edit().remove("saved_ssid").apply()
+        requestCallback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
+        requestCallback = null
+        connectivity.bindProcessToNetwork(null)
+        if (clearSavedNetwork) {
+            credentials.load()?.let { saved ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) runCatching {
+                    val builder = WifiNetworkSuggestion.Builder().setSsid(saved.ssid)
+                    if (saved.secured) { if (saved.wpa3) builder.setWpa3Passphrase(saved.password) else builder.setWpa2Passphrase(saved.password) }
+                    wifiManager.removeNetworkSuggestions(listOf(builder.build()))
+                }
+            }
+            credentials.clear()
+        }
         refreshActiveNetwork()
         if (clearMessage && !isConnected) state = WifiLinkUiState(message = "Wi-Fi connection cancelled.")
     }
@@ -150,22 +298,60 @@ internal class WifiConnectionController(context: Context) {
 @Composable
 internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val settingsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        controller.finishSystemPicker()
-    }
-    fun openSystemWifiPicker() {
-        controller.beginSystemPicker()
-        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            Intent(Settings.Panel.ACTION_WIFI)
+    var selectedNetwork by remember { mutableStateOf<ScanResult?>(null) }
+    var password by remember { mutableStateOf("") }
+    var discoveryMessage by remember { mutableStateOf("Scan to see nearby Wi-Fi networks.") }
+    var pendingConnect by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val wifiPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val scan = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            result.data?.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE, ScanResult::class.java)
         } else {
-            Intent(Settings.ACTION_WIFI_SETTINGS)
+            @Suppress("DEPRECATION")
+            result.data?.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE) as? ScanResult
         }
-        runCatching { settingsLauncher.launch(intent) }.onFailure {
-            controller.finishSystemPicker()
+        if (scan != null) {
+            selectedNetwork = scan
+            password = ""
+            discoveryMessage = "Selected ${scan.SSID}. Enter its password to connect."
+        } else {
+            discoveryMessage = "No network selected. Tap Scan Wi-Fi to try again."
         }
+    }
+    val nearbyPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) pendingConnect?.invoke()
+        else discoveryMessage = "Allow Nearby Wi-Fi access to connect. neXconnect does not request location permission."
+        pendingConnect = null
+    }
+    fun connectSelected() {
+        val scan = selectedNetwork ?: return
+        val caps = scan.capabilities.orEmpty().uppercase()
+        val enterpriseOrWep = "EAP" in caps || "WEP" in caps
+        if (enterpriseOrWep) {
+            discoveryMessage = "This network uses enterprise or legacy security, which is not supported yet."
+            return
+        }
+        val secured = "PSK" in caps || "SAE" in caps
+        val wpa3 = "SAE" in caps && "PSK" !in caps
+        val action = { controller.connect(scan.SSID, password, secured, wpa3) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingConnect = action
+            nearbyPermissionLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+        } else action()
+    }
+    fun scanWifi() {
+        selectedNetwork = null
+        password = ""
+        discoveryMessage = "Searching nearby Wi-Fi networks…"
+        controller.startDiscovery(
+            onFound = { sender -> runCatching { wifiPickerLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
+                .onFailure { discoveryMessage = "Could not open Wi-Fi selection. Please try again." } },
+            onFailure = { discoveryMessage = it }
+        )
     }
     BackHandler {
-        controller.finishSystemPicker()
+        if (controller.state.connecting) controller.disconnect(clearSavedNetwork = false)
         onDismiss()
     }
 
@@ -273,18 +459,51 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             ) {
                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.Wifi, null, tint = Color(0xFF54DDF5), modifier = Modifier.size(28.dp))
-                    Text("Use your phone’s Wi-Fi picker", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                    Text("Available networks and password entry are handled by Android. neXconnect will not request location access.", color = Color(0xFFA9B6D5), fontSize = 12.sp)
+                    Text("Available Wi-Fi networks", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    Text(discoveryMessage, color = Color(0xFFA9B6D5), fontSize = 12.sp)
                     Button(
-                        onClick = { openSystemWifiPicker() },
+                        onClick = { scanWifi() },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF208CB8), contentColor = Color.White)
                     ) {
                         Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(if (controller.isConnected) "Change Wi-Fi network" else "Choose Wi-Fi network")
+                        Text("Scan Wi-Fi")
                     }
+                    selectedNetwork?.let { scan ->
+                        Text("Selected: ${scan.SSID}", color = Color(0xFF71F0CB), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val secured = scan.capabilities.orEmpty().let { "PSK" in it || "SAE" in it || "WEP" in it || "EAP" in it }
+                        if (secured) {
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = { password = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Wi-Fi password") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                colors = androidx.compose.material3.TextFieldDefaults.colors(
+                                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                                    focusedContainerColor = Color(0xFF0C1430), unfocusedContainerColor = Color(0xFF0C1430),
+                                    focusedIndicatorColor = Color(0xFF56DDF5), unfocusedIndicatorColor = Color(0xFF526180),
+                                    focusedLabelColor = Color(0xFF73E5F4), unfocusedLabelColor = Color(0xFF9BAED0), cursorColor = Color(0xFF73E5F4)
+                                ),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                        }
+                        Button(
+                            onClick = { connectSelected() },
+                            enabled = !secured || password.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF208CB8), contentColor = Color.White)
+                        ) {
+                            Icon(Icons.Default.Wifi, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Connect to ${scan.SSID}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    controller.savedSsid?.let { saved -> Text("Saved for auto-login: $saved", color = Color(0xFF9CB7CA), fontSize = 11.sp) }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -300,7 +519,8 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
             OutlinedButton(
                 onClick = {
-                    if (controller.isConnected) openSystemWifiPicker()
+                    if (controller.isConnected) { controller.disconnect(); onDismiss() }
+                    else if (controller.state.connecting) { controller.disconnect(clearSavedNetwork = false); onDismiss() }
                     else { controller.disconnect(); onDismiss() }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -308,7 +528,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
                 border = BorderStroke(1.4.dp, Color(0xFF5EE1F5)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
             ) {
-                Text(if (controller.isConnected) "Manage or disconnect Wi-Fi" else if (controller.state.connecting) "Cancel connection" else "Cancel", fontWeight = FontWeight.SemiBold)
+                Text(if (controller.isConnected) "Disconnect Wi-Fi" else if (controller.state.connecting) "Cancel connection" else "Cancel", fontWeight = FontWeight.SemiBold)
             }
         }
         }
