@@ -127,26 +127,31 @@ private class WifiCredentialStore(context: Context) {
         return generator.generateKey()
     }
 
-    fun save(credentials: SavedWifiCredentials) {
-        val clear = JSONObject().put("ssid", credentials.ssid).put("password", credentials.password)
-            .put("secured", credentials.secured).put("wpa3", credentials.wpa3).toString().toByteArray(Charsets.UTF_8)
+    private fun encode(credentials: List<SavedWifiCredentials>) {
+        val networks = org.json.JSONArray()
+        credentials.forEach { network -> networks.put(JSONObject().put("ssid", network.ssid).put("password", network.password)
+            .put("secured", network.secured).put("wpa3", network.wpa3)) }
+        val clear = JSONObject().put("networks", networks).toString().toByteArray(Charsets.UTF_8)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val encrypted = cipher.iv + cipher.doFinal(clear)
-        prefs.edit().putString("credential_blob", Base64.encodeToString(encrypted, Base64.NO_WRAP)).apply()
+        prefs.edit().putString("credential_blob", Base64.encodeToString(cipher.iv + cipher.doFinal(clear), Base64.NO_WRAP)).apply()
     }
 
-    fun load(): SavedWifiCredentials? = runCatching {
+    fun loadAll(): List<SavedWifiCredentials> = runCatching {
         val data = Base64.decode(prefs.getString("credential_blob", null), Base64.NO_WRAP)
-        val iv = data.copyOfRange(0, 12)
-        val encrypted = data.copyOfRange(12, data.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv)) }
-        val json = JSONObject(String(cipher.doFinal(encrypted), Charsets.UTF_8))
-        SavedWifiCredentials(json.getString("ssid"), json.getString("password"), json.getBoolean("secured"), json.getBoolean("wpa3"))
-    }.getOrNull()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12))) }
+        val json = JSONObject(String(cipher.doFinal(data.copyOfRange(12, data.size)), Charsets.UTF_8))
+        if (json.has("networks")) {
+            val networks = json.getJSONArray("networks")
+            (0 until networks.length()).map { index -> networks.getJSONObject(index).let { item ->
+                SavedWifiCredentials(item.getString("ssid"), item.getString("password"), item.getBoolean("secured"), item.getBoolean("wpa3"))
+            } }
+        } else listOf(SavedWifiCredentials(json.getString("ssid"), json.getString("password"), json.getBoolean("secured"), json.getBoolean("wpa3")))
+    }.getOrDefault(emptyList())
 
+    fun load(ssid: String? = null): SavedWifiCredentials? = if (ssid == null) loadAll().firstOrNull() else loadAll().firstOrNull { it.ssid == ssid }
+    fun save(credentials: SavedWifiCredentials) = encode(loadAll().filterNot { it.ssid == credentials.ssid } + credentials)
     fun clear() { prefs.edit().remove("credential_blob").apply() }
 }
-
 /** Owns the active Wi-Fi request and encrypted saved-network credentials. */
 internal class WifiConnectionController(context: Context) {
     private val appContext = context.applicationContext
@@ -174,6 +179,8 @@ internal class WifiConnectionController(context: Context) {
 
     val isConnected: Boolean get() = state.connectedSsid != null
     val savedSsid: String? get() = credentials.load()?.ssid
+    val savedNetworkCount: Int get() = credentials.loadAll().size
+    fun passwordFor(ssid: String): String? = credentials.load(ssid)?.password
 
     @SuppressLint("MissingPermission")
     fun connect(ssid: String, password: String, secured: Boolean, wpa3: Boolean) {
@@ -326,8 +333,8 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         }
         if (scan != null) {
             selectedNetwork = scan
-            password = ""
-            discoveryMessage = "Selected ${scan.SSID}. Enter its password to connect."
+            password = controller.passwordFor(scan.SSID).orEmpty()
+            discoveryMessage = if (password.isNotEmpty()) "Saved login loaded for ${scan.SSID}. No need to enter the password again." else "Selected ${scan.SSID}. Enter its password to connect."
         } else {
             discoveryMessage = "No network selected. Tap Scan Wi-Fi to try again."
         }
@@ -356,13 +363,18 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         }
         val secured = "PSK" in caps || "SAE" in caps
         val wpa3 = "SAE" in caps && "PSK" !in caps
-        val action = {
-            val saveIntent = controller.savedNetworkIntent(scan.SSID, password, secured, wpa3)
-            if (saveIntent == null) controller.connect(scan.SSID, password, secured, wpa3)
+        val rememberedPassword = controller.passwordFor(scan.SSID)
+        val loginPassword = rememberedPassword ?: password
+        val action: () -> Unit = {
+            if (rememberedPassword != null) controller.connect(scan.SSID, loginPassword, secured, wpa3)
             else {
-                pendingConnect = { controller.connect(scan.SSID, password, secured, wpa3) }
-                runCatching { saveNetworkLauncher.launch(saveIntent) }
-                    .onFailure { discoveryMessage = "Could not open Android save-network prompt. Try again."; pendingConnect = null }
+                val saveIntent = controller.savedNetworkIntent(scan.SSID, loginPassword, secured, wpa3)
+                if (saveIntent == null) controller.connect(scan.SSID, loginPassword, secured, wpa3)
+                else {
+                    pendingConnect = { controller.connect(scan.SSID, loginPassword, secured, wpa3) }
+                    runCatching { saveNetworkLauncher.launch(saveIntent) }
+                        .onFailure { discoveryMessage = "Could not open Android save-network prompt. Try again."; pendingConnect = null }
+                }
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -535,7 +547,8 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
                             Text("Connect to ${scan.SSID}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
-                    controller.savedSsid?.let { saved -> Text("Saved for auto-login: $saved", color = Color(0xFF9CB7CA), fontSize = 11.sp) }
+                    if (controller.savedNetworkCount > 0) Text("${controller.savedNetworkCount} saved Wi-Fi network(s) · passwords encrypted on this phone", color = Color(0xFF9CB7CA), fontSize = 11.sp)
+                    Text("2.4 GHz and 5 GHz supported · phone selects the best available band", color = Color(0xFF9CB7CA), fontSize = 11.sp)
                 }
             }
             Spacer(Modifier.height(10.dp))
