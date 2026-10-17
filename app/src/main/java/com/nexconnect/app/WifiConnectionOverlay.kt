@@ -16,6 +16,7 @@ import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import android.net.wifi.WifiNetworkSuggestion
+import android.provider.Settings
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -197,7 +198,7 @@ internal class WifiConnectionController(context: Context) {
             val callback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     connectivity.bindProcessToNetwork(network)
-                    val autoJoinReady = runCatching { credentials.save(saved); registerAutoJoin(saved) }.getOrDefault(false)
+                    val autoJoinReady = runCatching { credentials.save(saved); if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) registerAutoJoin(saved) else true }.getOrDefault(false)
                     state = WifiLinkUiState(
                         connectedSsid = ssid,
                         message = if (autoJoinReady) "Connected to $ssid. Credentials are encrypted; Android can reconnect automatically next time."
@@ -210,12 +211,12 @@ internal class WifiConnectionController(context: Context) {
                 }
                 override fun onLost(network: Network) {
                     if (connectivity.boundNetworkForProcess == network) connectivity.bindProcessToNetwork(null)
-                    state = WifiLinkUiState(message = "Wi-Fi connection lost. Select the saved network to reconnect.")
-                    requestCallback = null
+                    state = WifiLinkUiState(connecting = requestCallback != null, message = "Wi-Fi signal lost. Waiting to reconnect to the saved network…")
                 }
             }
             requestCallback = callback
-            connectivity.requestNetwork(request, callback, 30_000)
+            // Keep the app-scoped local-device request alive; timed requests can drop the BMS link.
+            connectivity.requestNetwork(request, callback)
         } catch (_: IllegalArgumentException) {
             state = WifiLinkUiState(message = "This Wi-Fi password or security mode is not supported.")
         } catch (_: SecurityException) {
@@ -225,16 +226,30 @@ internal class WifiConnectionController(context: Context) {
         }
     }
 
+    /** Ask Android to save this network in the user's Wi-Fi list (Android 11+). */
+    fun savedNetworkIntent(ssid: String, password: String, secured: Boolean, wpa3: Boolean): Intent? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val suggestion = buildSuggestion(SavedWifiCredentials(ssid, password, secured, wpa3))
+        return Intent(Settings.ACTION_WIFI_ADD_NETWORKS).putParcelableArrayListExtra(
+            Settings.EXTRA_WIFI_NETWORK_LIST, arrayListOf(suggestion)
+        )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun buildSuggestion(saved: SavedWifiCredentials): WifiNetworkSuggestion {
+        val builder = WifiNetworkSuggestion.Builder().setSsid(saved.ssid)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) builder.setIsInitialAutojoinEnabled(true)
+        if (saved.secured) {
+            if (saved.wpa3) builder.setWpa3Passphrase(saved.password) else builder.setWpa2Passphrase(saved.password)
+        }
+        return builder.build()
+    }
     @SuppressLint("MissingPermission")
     private fun registerAutoJoin(saved: SavedWifiCredentials): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
         return runCatching {
-            val builder = WifiNetworkSuggestion.Builder().setSsid(saved.ssid)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) builder.setIsInitialAutojoinEnabled(true)
-            if (saved.secured) {
-                if (saved.wpa3) builder.setWpa3Passphrase(saved.password) else builder.setWpa2Passphrase(saved.password)
-            }
-            wifiManager.addNetworkSuggestions(listOf(builder.build())) == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS
+            val status = wifiManager.addNetworkSuggestions(listOf(buildSuggestion(saved)))
+            status == WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS || status == WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_ADD_DUPLICATE
         }.getOrDefault(false)
     }
 
@@ -317,6 +332,15 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             discoveryMessage = "No network selected. Tap Scan Wi-Fi to try again."
         }
     }
+    val saveNetworkLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            pendingConnect?.invoke()
+            discoveryMessage = "Network saved by Android. Starting connection…"
+        } else {
+            pendingConnect = null
+            discoveryMessage = "Android did not save this network. Accept the system prompt to enable automatic reconnection."
+        }
+    }
     val nearbyPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) pendingConnect?.invoke()
         else discoveryMessage = "Allow Nearby Wi-Fi access to connect. neXconnect does not request location permission."
@@ -332,11 +356,19 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         }
         val secured = "PSK" in caps || "SAE" in caps
         val wpa3 = "SAE" in caps && "PSK" !in caps
-        val action = { controller.connect(scan.SSID, password, secured, wpa3) }
+        val action = {
+            val saveIntent = controller.savedNetworkIntent(scan.SSID, password, secured, wpa3)
+            if (saveIntent == null) controller.connect(scan.SSID, password, secured, wpa3)
+            else {
+                pendingConnect = { controller.connect(scan.SSID, password, secured, wpa3) }
+                runCatching { saveNetworkLauncher.launch(saveIntent) }
+                    .onFailure { discoveryMessage = "Could not open Android save-network prompt. Try again."; pendingConnect = null }
+            }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED
         ) {
-            pendingConnect = action
+            pendingConnect = { action(); Unit }
             nearbyPermissionLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
         } else action()
     }
