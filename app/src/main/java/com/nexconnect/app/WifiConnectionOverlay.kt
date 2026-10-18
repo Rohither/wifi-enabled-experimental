@@ -434,7 +434,6 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
                 }
             }
         }
-        if (controller.state.connecting) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
@@ -467,7 +466,9 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
                     view.setTag(null)
                 }
             )
-            Box(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
+            
+        if (controller.state.connecting) {
+Box(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
                 OutlinedButton(
                     onClick = { controller.disconnect(); onDismiss() },
                     modifier = Modifier.fillMaxWidth(),
@@ -481,17 +482,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 10.dp, bottom = 92.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Image(
-                painter = painterResource(R.drawable.wifi_connecting_art),
-                contentDescription = "Animated Wi-Fi connection artwork",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth(.9f).height(artworkHeight).graphicsLayer {
-                    val breathe = .98f + .025f * kotlin.math.abs(sin((phase * PI).toDouble())).toFloat()
-                    scaleX = breathe
-                    scaleY = breathe
-                    alpha = .93f
-                }
-            )
+            Spacer(Modifier.height(artworkHeight))
             Text("Connect to Wi-Fi", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Text("Choose a nearby network and enter its password", color = Color(0xFF9BADE1), fontSize = 13.sp)
             Spacer(Modifier.height(12.dp))
