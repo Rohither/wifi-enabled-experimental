@@ -35,6 +35,7 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -161,6 +162,7 @@ internal class WifiConnectionController(context: Context) {
     var state by mutableStateOf(WifiLinkUiState())
         private set
     private var requestCallback: ConnectivityManager.NetworkCallback? = null
+    private var discoveryCancelled = false
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) markWifiConnected()
@@ -260,7 +262,10 @@ internal class WifiConnectionController(context: Context) {
         }.getOrDefault(false)
     }
 
+    fun cancelDiscovery() { discoveryCancelled = true }
+
     fun startDiscovery(onFound: (IntentSender) -> Unit, onFailure: (String) -> Unit) {
+        discoveryCancelled = false
         val manager = appContext.getSystemService(Context.COMPANION_DEVICE_SERVICE) as? CompanionDeviceManager
         if (manager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             onFailure("Wi-Fi device discovery is unavailable on this phone. Open Android Wi-Fi settings instead.")
@@ -275,8 +280,8 @@ internal class WifiConnectionController(context: Context) {
         try {
             @Suppress("DEPRECATION")
             manager.associate(request, object : CompanionDeviceManager.Callback() {
-                override fun onDeviceFound(chooserLauncher: IntentSender) = onFound(chooserLauncher)
-                override fun onFailure(error: CharSequence?) = onFailure(error?.toString() ?: "Wi-Fi discovery failed. Try again.")
+                override fun onDeviceFound(chooserLauncher: IntentSender) { if (!discoveryCancelled) onFound(chooserLauncher) }
+                override fun onFailure(error: CharSequence?) { if (!discoveryCancelled) onFailure(error?.toString() ?: "Wi-Fi discovery failed. Try again.") }
             }, Handler(Looper.getMainLooper()))
         } catch (error: SecurityException) {
             onFailure("Android could not scan for Wi-Fi. Turn on Location Services for Android's system scan; neXconnect will not ask for location permission.")
@@ -321,6 +326,8 @@ internal class WifiConnectionController(context: Context) {
 internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismiss: () -> Unit) {
     val context = LocalContext.current
     var selectedNetwork by remember { mutableStateOf<ScanResult?>(null) }
+    var isScanning by remember { mutableStateOf(false) }
+    var connectingSsid by remember { mutableStateOf<String?>(null) }
     var password by remember { mutableStateOf("") }
     var discoveryMessage by remember { mutableStateOf("Scan to see nearby Wi-Fi networks.") }
     var pendingConnect by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -331,6 +338,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             @Suppress("DEPRECATION")
             result.data?.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE) as? ScanResult
         }
+        isScanning = false
         if (scan != null) {
             selectedNetwork = scan
             password = controller.passwordFor(scan.SSID).orEmpty()
@@ -363,6 +371,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         }
         val secured = "PSK" in caps || "SAE" in caps
         val wpa3 = "SAE" in caps && "PSK" !in caps
+        connectingSsid = scan.SSID
         val rememberedPassword = controller.passwordFor(scan.SSID)
         val loginPassword = rememberedPassword ?: password
         val action: () -> Unit = {
@@ -385,20 +394,26 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
         } else action()
     }
     fun scanWifi() {
+        isScanning = true
         selectedNetwork = null
         password = ""
         discoveryMessage = "Searching nearby Wi-Fi networks…"
         controller.startDiscovery(
-            onFound = { sender -> runCatching { wifiPickerLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
-                .onFailure { discoveryMessage = "Could not open Wi-Fi selection. Please try again." } },
-            onFailure = { discoveryMessage = it }
+            onFound = { sender ->
+                isScanning = false
+                runCatching { wifiPickerLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
+                    .onFailure { discoveryMessage = "Could not open Wi-Fi selection. Please try again." }
+            },
+            onFailure = { isScanning = false; discoveryMessage = it }
         )
     }
     BackHandler {
+        if (isScanning) controller.cancelDiscovery()
         if (controller.state.connecting) controller.disconnect(clearSavedNetwork = false)
         onDismiss()
     }
 
+    val videoAlpha by animateFloatAsState(if (connectingSsid != null && controller.state.connectedSsid == connectingSsid) 0f else 1f, animationSpec = tween(650), label = "Wi-Fi success fade")
     val transition = rememberInfiniteTransition(label = "Wi-Fi connection animation")
     val phase by transition.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart), label = "Wi-Fi pulse")
     BoxWithConstraints(
@@ -435,7 +450,7 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             }
         }
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = videoAlpha },
                 factory = { viewContext ->
                     TextureView(viewContext).apply {
                         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -468,9 +483,21 @@ internal fun WifiConnectionOverlay(controller: WifiConnectionController, onDismi
             )
             
         if (controller.state.connecting) {
-Box(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
+            Box(Modifier.align(Alignment.Center).padding(horizontal = 24.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().background(Color(0xCC111735), RoundedCornerShape(24.dp))
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.Wifi, contentDescription = null, tint = Color(0xFF54DDF5), modifier = Modifier.size(34.dp))
+                    Text("Connecting to Wi-Fi", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(controller.state.message, color = Color(0xFFB8D6EA), fontSize = 14.sp)
+                }
+            }
+            Box(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
                 OutlinedButton(
-                    onClick = { controller.disconnect(); onDismiss() },
+                    onClick = { controller.disconnect(clearSavedNetwork = false); onDismiss() },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(28.dp),
                     border = BorderStroke(1.4.dp, Color(0xFF5EE1F5)),
@@ -555,16 +582,17 @@ Box(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navi
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 24.dp, vertical = 20.dp)) {
             OutlinedButton(
                 onClick = {
+                    if (isScanning) controller.cancelDiscovery()
                     if (controller.isConnected) { controller.disconnect(); onDismiss() }
                     else if (controller.state.connecting) { controller.disconnect(clearSavedNetwork = false); onDismiss() }
-                    else { controller.disconnect(); onDismiss() }
+                    else { onDismiss() }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(28.dp),
                 border = BorderStroke(1.4.dp, Color(0xFF5EE1F5)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
             ) {
-                Text(if (controller.isConnected) "Disconnect Wi-Fi" else if (controller.state.connecting) "Cancel connection" else "Cancel", fontWeight = FontWeight.SemiBold)
+                Text(if (controller.isConnected) "Disconnect Wi-Fi" else if (controller.state.connecting) "Cancel connection" else if (isScanning) "Cancel search" else "Cancel", fontWeight = FontWeight.SemiBold)
             }
         }
         }
